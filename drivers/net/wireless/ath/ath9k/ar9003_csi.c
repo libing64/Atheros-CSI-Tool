@@ -47,7 +47,7 @@ volatile u32        csi_len;
 volatile u32        csi_valid;
 volatile u32        recording;
 
-static struct       ath9k_csi csi_buf[16];
+static struct       ath9k_csi csi_buf[16];//TODO
 static char         tx_buf[Tx_Buf_LEN];
 //static char         rx_buf[Rx_Buf_LEN];
 
@@ -64,6 +64,7 @@ static ssize_t      csi_read(struct file *file, char __user *user_buf,
 static ssize_t      csi_write(struct file *file, const char __user *user_buf,
 			            size_t count, loff_t *ppos);
 
+//register module functions
 static const struct file_operations csi_fops = {
 	.read           = csi_read,
 	.write          = csi_write,
@@ -153,6 +154,8 @@ static int csi_close(struct inode *inode, struct file *file)
 	return 0;
 }
 
+
+//read csi and received data
 static ssize_t csi_read(struct file *file, char __user *user_buf,
 				      size_t count, loff_t *ppos)
 {
@@ -167,7 +170,7 @@ static ssize_t csi_read(struct file *file, char __user *user_buf,
     
     if (csi_head == csi_tail) 
     {                                                       // wait until time out
-        wait_event_interruptible_timeout(csi_queue,csi_head != csi_tail,  5*HZ);
+        wait_event_interruptible_timeout(csi_queue, csi_head != csi_tail,  5*HZ);
     } 
     if(csi_head != csi_tail){
         csi = (struct ath9k_csi*)&csi_buf[csi_tail];
@@ -180,27 +183,30 @@ static ssize_t csi_read(struct file *file, char __user *user_buf,
         payload_len      = csi->payload_len;                // payload length (bytes)
         payload_buf_addr = csi->payload_buf;                // payload buffer
         
-
-        memcpy(tx_buf,RxStatus,23);                         // copy the status to the buffer 
+        //1. rx_status
+        memcpy(tx_buf, RxStatus, 23);                         // copy the status to the buffer 
         len += 23;
-        
-        memcpy(tx_buf+len,&payload_len, 2);                 // record the length of payload 
-        len += 2;
-        
+        //2. payload len, this is stored in the rx status
+        // memcpy(tx_buf + len, &payload_len, 2);                 // record the length of payload 
+        // len += 2;
+
+
+        //3. csi (csi len is stored in the rx status)
         if (csi_len > 0){
-            memcpy(tx_buf+len,csi_buf_addr,csi_len);        // copy csi to the buffer
+            memcpy(tx_buf + len, csi_buf_addr, csi_len);        // copy csi to the buffer
             len += csi_len;
         }
-        
-        memcpy(tx_buf+len,payload_buf_addr, payload_len);   // copy payload to the buffer
+        //4. payload
+        memcpy(tx_buf+len, payload_buf_addr, payload_len);   // copy payload to the buffer
         len += payload_len;
         
-        memcpy(tx_buf+len,&len, 2);                         // record how many bytes we copy 
+        //5. total len, used for double checking?
+        memcpy(tx_buf + len, &len, 2);                         // record how many bytes we copy 
         len += 2;
         
-        copy_to_user(user_buf,tx_buf,len);                  // COPY
+        copy_to_user(user_buf, tx_buf, len);                  // COPY
         
-        csi_tail = (csi_tail+1) & 0x0000000F;               // delete the buffer 
+        csi_tail = (csi_tail + 1) & 0x0000000F;               // shift to next buffer 
         return len;
     }else{
         return 0;
@@ -214,6 +220,7 @@ static ssize_t csi_write(struct file *file, const char __user *user_buf,
 	return 0;
 }
 
+//payload buffer, the transmitted data
 void csi_record_payload(void* data, u_int16_t data_len)
 {
     struct ath9k_csi* csi;
@@ -223,13 +230,16 @@ void csi_record_payload(void* data, u_int16_t data_len)
             csi_tail = (csi_tail + 1) & 0x0000000F;
         
         csi = (struct ath9k_csi*)&csi_buf[csi_head];
-        memcpy((void*)(csi->payload_buf),data, data_len);           // copy the payload
+        memcpy((void*)(csi->payload_buf), data, data_len);           // copy the payload
         csi->payload_len = data_len;                                // record the payload length (bytes)
         csi_valid = 1;
     }
 }
 EXPORT_SYMBOL(csi_record_payload);
 
+//csi status, csi information, 
+//output: data && rxs
+//tansmitted data is not stored in rxs
 void csi_record_status(struct ath_hw *ah, struct ath_rx_status *rxs, struct ar9003_rxs *rxsp,void* data)
 {
     struct ath9k_csi* csi;
